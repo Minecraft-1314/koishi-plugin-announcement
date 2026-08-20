@@ -17,6 +17,7 @@ export interface AnnouncementConfig {
   debug: boolean
   adminIds: string
   sendInterval: number
+  collectTimeout: number
   announceCommandName: string
   enableCommandName: string
   disableCommandName: string
@@ -28,6 +29,7 @@ export const Config: Schema<AnnouncementConfig> = Schema.object({
   debug: Schema.boolean().default(false).description('调试模式（详细日志输出）'),
   adminIds: Schema.string().default('').description('管理员用户ID（逗号分隔，仅这些用户可发送公告）'),
   sendInterval: Schema.number().min(0).step(1).default(200).description('每条消息发送间隔 (ms)'),
+  collectTimeout: Schema.number().min(10).step(1).default(120).description('收集模式超时时间（秒）'),
   announceCommandName: Schema.string().default('announce').description('发送公告命令名'),
   enableCommandName: Schema.string().default('announce.enable').description('开启接收公告命令名'),
   disableCommandName: Schema.string().default('announce.disable').description('关闭接收公告命令名'),
@@ -63,7 +65,7 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     return Boolean(session.guildId)
   }
 
-  async function safeSend(session: any, message: string | h) {
+  async function safeSend(session: any, message: any) {
     try {
       await session.send(message)
     } catch (e) {
@@ -263,23 +265,94 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
   }
 
   const pendingMap = new Map<string, { content: h[]; users: any[]; channels: any[]; expireAt: number }>()
+  const collectSessions = new Map<string, { text: string; imageUrls: string[]; target: string; timer: NodeJS.Timeout }>()
 
-  ctx.command(`${config.announceCommandName} <message:text>`, '发送公告（仅限配置的管理员ID）')
+  ctx.on('dispose', () => {
+    for (const s of collectSessions.values()) clearTimeout(s.timer)
+    collectSessions.clear()
+    pendingMap.clear()
+  })
+
+  function startCollect(session: any, target: string) {
+    const key = `${session.platform}:${session.userId}`
+    if (collectSessions.has(key)) {
+      safeSend(session, '你已在收集模式中')
+      return
+    }
+    const collect = {
+      text: '',
+      imageUrls: [],
+      target,
+      timer: null as any
+    }
+    collect.timer = setTimeout(() => {
+      collectSessions.delete(key)
+      safeSend(session, '收集超时，已自动退出')
+    }, config.collectTimeout * 1000)
+    collectSessions.set(key, collect)
+    safeSend(session, '已进入公告收集模式，可继续发送文本和图片。\n发送「预览」查看当前内容，发送「确认」结束收集并进入发送确认，发送「取消」退出。')
+  }
+
+  function resetCollectTimer(session: any, collect: any) {
+    clearTimeout(collect.timer)
+    collect.timer = setTimeout(() => {
+      collectSessions.delete(`${session.platform}:${session.userId}`)
+      safeSend(session, '收集超时，已自动退出')
+    }, config.collectTimeout * 1000)
+  }
+
+  async function finalizeAnnouncement(session: any, text: string, target: string, imageUrls: string[] = []) {
+    const { users: allUsers, channels: allChannels } = await collectTargets()
+    let targetUsers = allUsers
+    let targetChannels = allChannels
+    if (target === 'private') targetChannels = []
+    if (target === 'group') targetUsers = []
+
+    if (targetUsers.length === 0 && targetChannels.length === 0) {
+      await safeSend(session, '没有可接收公告的用户或群聊')
+      return
+    }
+
+    const content = buildContent(text, imageUrls)
+    if (content.length === 0) {
+      await safeSend(session, '公告内容不能为空')
+      return
+    }
+
+    const preview = formatTargetPreview(targetUsers, targetChannels)
+    const textPreview = text.trim() || '(无文字)'
+    const imageCount = imageUrls.length + (text.match(/https?:\/\/[^\s]+?\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s]*)?/gi)?.length || 0)
+    const contentPreview = `${textPreview}${imageCount > 0 ? `\n[包含 ${imageCount} 张图片]` : ''}`
+
+    logger.info(`管理员 ${session.userId} 发起公告，目标: ${target}，内容预览: ${contentPreview}`)
+    logTargetsSummary(targetUsers, targetChannels)
+
+    const confirmText = `即将发送公告：\n\n内容：\n${contentPreview}\n\n目标：\n${preview}\n\n请回复“确认”发送，回复“取消”取消，回复“修改”重新输入。`
+    await safeSend(session, confirmText)
+
+    pendingMap.set(`${session.platform}:${session.userId}`, {
+      content,
+      users: targetUsers,
+      channels: targetChannels,
+      expireAt: Date.now() + 120000
+    })
+  }
+
+  ctx.command(`${config.announceCommandName} [message:text]`, '发送公告（仅限配置的管理员ID）')
     .option('target', '-t <target>', { type: /^(private|group|all)$/i, fallback: 'all' })
+    .option('collect', '-c', { type: 'boolean' })
     .action(async ({ session, options }, message) => {
       if (!session) return '会话不可用'
       if (!hasAdmin(session)) return '你没有权限发送公告'
-      if (!message && !(session.elements?.some(el => el.type === 'image'))) {
-        return '请输入公告内容或附带图片'
-      }
-      const target = ((options?.target as string) || 'all').toLowerCase()
-      const { users: allUsers, channels: allChannels } = await collectTargets()
-      let targetUsers = allUsers
-      let targetChannels = allChannels
-      if (target === 'private') targetChannels = []
-      if (target === 'group') targetUsers = []
 
-      if (targetUsers.length === 0 && targetChannels.length === 0) return '没有可接收公告的用户或群聊'
+      const target = ((options?.target as string) || 'all').toLowerCase()
+      const hasAttachedImage = session.elements?.some(el => el.type === 'image') ?? false
+      const useCollect = options?.collect || (!message && !hasAttachedImage)
+
+      if (useCollect) {
+        startCollect(session, target)
+        return
+      }
 
       const attachedImages: string[] = []
       if (session.elements) {
@@ -290,68 +363,95 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
         }
       }
 
-      const content = buildContent(message || '', attachedImages)
-      if (content.length === 0) return '公告内容不能为空'
-
-      const preview = formatTargetPreview(targetUsers, targetChannels)
-      const textPreview = content.filter(el => el.type === 'text').map(el => el.data?.text).join(' ')
-      const imageCount = content.filter(el => el.type === 'image').length
-      const contentPreview = (textPreview || '(无文字)') + (imageCount > 0 ? `\n[包含 ${imageCount} 张图片]` : '')
-
-      logger.info(`管理员 ${session.userId} 发起公告，目标: ${target}，内容预览: ${contentPreview}`)
-      logTargetsSummary(targetUsers, targetChannels)
-
-      const confirmText = `即将发送公告：\n\n内容：\n${contentPreview}\n\n目标：\n${preview}\n\n请回复“确认”发送，回复“取消”取消，回复“修改”重新输入。`
-
-      await safeSend(session, confirmText)
-
-      pendingMap.set(String(session.userId), {
-        content,
-        users: targetUsers,
-        channels: targetChannels,
-        expireAt: Date.now() + 60000
-      })
+      return finalizeAnnouncement(session, message || '', target, attachedImages)
     })
 
   ctx.middleware(async (session, next) => {
     if (!session) return next()
-    const userId = String(session.userId)
+    const userId = `${session.platform}:${session.userId}`
+
     const pending = pendingMap.get(userId)
-    if (!pending) return next()
-    if (pending.expireAt < Date.now()) {
-      pendingMap.delete(userId)
-      return next()
+    if (pending) {
+      if (pending.expireAt < Date.now()) {
+        pendingMap.delete(userId)
+        return next()
+      }
+      const text = session.content?.trim() || ''
+      if (text === '确认') {
+        pendingMap.delete(userId)
+        await safeSend(session, '开始发送公告...')
+        let resultText = ''
+        if (pending.users.length > 0) {
+          const r = await sendToUsers(pending.content, pending.users)
+          resultText += `私聊发送完成：成功 ${r.success}，失败 ${r.fail}\n`
+        }
+        if (pending.channels.length > 0) {
+          const r = await sendToGroups(pending.content, pending.channels)
+          resultText += `群聊发送完成：成功 ${r.success}，失败 ${r.fail}`
+        }
+        await safeSend(session, resultText || '没有发送任何公告')
+        logger.info(`管理员 ${session.userId} 确认发送公告，结果: ${resultText}`)
+        return
+      } else if (text === '取消') {
+        pendingMap.delete(userId)
+        await safeSend(session, '已取消发送公告')
+        logger.info(`管理员 ${session.userId} 取消发送公告`)
+        return
+      } else if (text === '修改') {
+        pendingMap.delete(userId)
+        await safeSend(session, '已取消，请重新使用公告命令')
+        logger.info(`管理员 ${session.userId} 选择修改公告，已取消`)
+        return
+      } else {
+        await safeSend(session, '请输入“确认”发送，“取消”取消，“修改”重新输入')
+        return
+      }
     }
+
+    const collect = collectSessions.get(userId)
+    if (!collect) return next()
+
     const text = session.content?.trim() || ''
-    if (text === '确认') {
-      pendingMap.delete(userId)
-      await safeSend(session, '开始发送公告...')
-      let resultText = ''
-      if (pending.users.length > 0) {
-        const r = await sendToUsers(pending.content, pending.users)
-        resultText += `私聊发送完成：成功 ${r.success}，失败 ${r.fail}\n`
-      }
-      if (pending.channels.length > 0) {
-        const r = await sendToGroups(pending.content, pending.channels)
-        resultText += `群聊发送完成：成功 ${r.success}，失败 ${r.fail}`
-      }
-      await safeSend(session, resultText || '没有发送任何公告')
-      logger.info(`管理员 ${userId} 确认发送公告，结果: ${resultText}`)
-      return
-    } else if (text === '取消') {
-      pendingMap.delete(userId)
-      await safeSend(session, '已取消发送公告')
-      logger.info(`管理员 ${userId} 取消发送公告`)
-      return
-    } else if (text === '修改') {
-      pendingMap.delete(userId)
-      await safeSend(session, '已取消，请重新使用公告命令输入新内容')
-      logger.info(`管理员 ${userId} 选择修改公告，已取消`)
-      return
-    } else {
-      await safeSend(session, '请输入“确认”发送，“取消”取消，“修改”重新输入')
+    if (text === '取消' || text === 'cancel') {
+      clearTimeout(collect.timer)
+      collectSessions.delete(userId)
+      await safeSend(session, '已取消收集模式')
       return
     }
+    if (text === '确认' || text === '开始' || text === 'start') {
+      clearTimeout(collect.timer)
+      collectSessions.delete(userId)
+      if (!collect.text && collect.imageUrls.length === 0) {
+        await safeSend(session, '公告内容不能为空')
+        return
+      }
+      await finalizeAnnouncement(session, collect.text, collect.target, collect.imageUrls)
+      return
+    }
+    if (text === '预览' || text === 'preview') {
+      const previewText = collect.text || '(无文字)'
+      const imgCount = collect.imageUrls.length
+      await safeSend(session, `当前公告内容：\n${previewText}\n${imgCount > 0 ? `图片数量：${imgCount}` : ''}`)
+      return
+    }
+
+    const imgs = h.select(session.elements || [], 'img')
+    for (const img of imgs) {
+      const src = img.attrs?.src
+      if (src) collect.imageUrls.push(String(src))
+    }
+    if (imgs.length > 0) {
+      resetCollectTimer(session, collect)
+      await safeSend(session, `已添加 ${imgs.length} 张图片，当前共 ${collect.imageUrls.length} 张`)
+    }
+
+    if (text && text !== '预览' && text !== '确认' && text !== '取消') {
+      if (collect.text) collect.text += '\n' + text
+      else collect.text = text
+      resetCollectTimer(session, collect)
+      await safeSend(session, '文字已更新')
+    }
+    return next()
   })
 
   ctx.command(config.enableCommandName, '开启接收公告').action(async ({ session }) => {
