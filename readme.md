@@ -20,7 +20,7 @@ This is an **announcement plugin** developed for the Koishi robot framework. It 
 - ✅ 管理员 ID 白名单控制发送权限
 - ✅ 用户可在私聊中自行开启/关闭公告接收
 - ✅ 群聊接收状态可由管理员在群内设置
-- ✅ 支持文字与图片公告（图片 URL 自动识别，收集模式可发送图片）
+- ✅ 支持文字与图片公告
 - ✅ 支持收集模式：连续发送文本和图片，最后确认发送
 - ✅ 发送前显示目标预览和内容预览，可确认/取消/修改
 - ✅ 调试模式输出详细日志
@@ -77,8 +77,7 @@ This is an **announcement plugin** developed for the Koishi robot framework. It 
 
 1. 在插件配置中填写 `adminIds`，例如 `123456,789012`。
 2. 使用命令 `announce <公告内容>` 发起公告。
-   - 可在文本中包含图片 URL（以 `.jpg`、`.png` 等结尾的链接），插件会自动提取并作为图片发送。
-   - 也可在命令后直接附带图片（如果平台支持）。
+   - 可在命令后直接附带图片（如果平台支持）。
 3. 机器人会返回目标预览（私聊用户和群聊列表）和内容预览。
 4. 回复 `确认` 发送，回复 `取消` 取消，回复 `修改` 重新输入。
 5. 发送完成后会返回成功/失败统计。
@@ -118,12 +117,8 @@ This is an **announcement plugin** developed for the Koishi robot framework. It 
 - 必须启用 Koishi 数据库插件（如 `@koishijs/plugin-database-sqlite`），否则插件无法存储接收偏好。
 - 默认所有用户和群聊都接收公告，用户可自行关闭私聊接收，群聊由管理员控制。
 - 发送大量用户时可能耗时较长，请合理设置 `sendInterval`。
-- 图片支持：
-  - 文本中的图片 URL 需以常见图片扩展名结尾（如 `https://example.com/image.jpg`）。
-  - 收集模式中直接发送的图片会被提取 `img` 元素的 `src`。
 - 调试模式会输出详细日志，建议仅在排查问题时开启。
 - 未配置任何 `adminIds` 时，无人可以发送公告。
-- 获取好友/群列表依赖机器人适配器实现 `getFriendList` / `getGuildList`；如果不支持，将忽略该平台。
 
 ## 项目贡献者 (Contributors)
 

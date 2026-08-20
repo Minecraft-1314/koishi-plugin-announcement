@@ -73,6 +73,36 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     }
   }
 
+  function decodeHtmlEntities(str: string): string {
+    return str
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+  }
+
+  function getTextFromElements(elements?: any[]): string {
+    if (!elements || !Array.isArray(elements)) return ''
+    const texts = h.select(elements, 'text').map(el => el.attrs?.text || el.data?.text || '')
+    return texts.join(' ').trim()
+  }
+
+  function hasImageElement(elements?: any[]): boolean {
+    if (!elements || !Array.isArray(elements)) return false
+    return elements.some(el => el.type === 'img' || el.type === 'image')
+  }
+
+  function getText(session: any): string {
+    const elements = session.elements
+    if (hasImageElement(elements)) {
+      return getTextFromElements(elements)
+    }
+    const fromElements = getTextFromElements(elements)
+    if (fromElements) return fromElements
+    return session.content?.trim() || ''
+  }
+
   async function setUserPreference(session: any, enabled: boolean) {
     const id = `${session.platform}:${session.userId}`
     try {
@@ -198,33 +228,12 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     }
   }
 
-  function extractImageUrls(text: string): { cleanedText: string; imageUrls: string[] } {
-    const imageUrlRegex = /https?:\/\/[^\s]+?\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s]*)?/gi
-    const imageUrls: string[] = []
-    let match: RegExpExecArray | null
-    const replacements: { start: number; end: number; url: string }[] = []
-    imageUrlRegex.lastIndex = 0
-    while ((match = imageUrlRegex.exec(text)) !== null) {
-      imageUrls.push(match[0])
-      replacements.push({ start: match.index, end: match.index + match[0].length, url: match[0] })
-    }
-    let cleanedText = text
-    for (let i = replacements.length - 1; i >= 0; i--) {
-      const { start, end } = replacements[i]
-      cleanedText = cleanedText.slice(0, start) + ' ' + cleanedText.slice(end)
-    }
-    cleanedText = cleanedText.trim().replace(/\s{2,}/g, ' ')
-    return { cleanedText, imageUrls }
-  }
-
   function buildContent(messageText: string, attachedImages: string[]): h[] {
-    const { cleanedText, imageUrls } = extractImageUrls(messageText || '')
-    const allImageUrls = [...imageUrls, ...attachedImages]
     const content: h[] = []
-    if (cleanedText) {
-      content.push(h.text(cleanedText))
+    if (messageText && messageText.trim()) {
+      content.push(h.text(messageText.trim()))
     }
-    for (const url of allImageUrls) {
+    for (const url of attachedImages) {
       content.push(h.image(url))
     }
     return content
@@ -321,7 +330,7 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
 
     const preview = formatTargetPreview(targetUsers, targetChannels)
     const textPreview = text.trim() || '(无文字)'
-    const imageCount = imageUrls.length + (text.match(/https?:\/\/[^\s]+?\.(?:jpg|jpeg|png|gif|webp|bmp)(?:\?[^\s]*)?/gi)?.length || 0)
+    const imageCount = imageUrls.length
     const contentPreview = `${textPreview}${imageCount > 0 ? `\n[包含 ${imageCount} 张图片]` : ''}`
 
     logger.info(`管理员 ${session.userId} 发起公告，目标: ${target}，内容预览: ${contentPreview}`)
@@ -346,7 +355,7 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
       if (!hasAdmin(session)) return '你没有权限发送公告'
 
       const target = ((options?.target as string) || 'all').toLowerCase()
-      const hasAttachedImage = session.elements?.some(el => el.type === 'image') ?? false
+      const hasAttachedImage = session.elements?.some(el => el.type === 'image' || el.type === 'img') ?? false
       const useCollect = options?.collect || (!message && !hasAttachedImage)
 
       if (useCollect) {
@@ -358,12 +367,16 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
       if (session.elements) {
         for (const el of session.elements) {
           if (el.type === 'image' && el.data?.src) {
-            attachedImages.push(String(el.data.src))
+            attachedImages.push(decodeHtmlEntities(String(el.data.src)))
+          } else if (el.type === 'img' && el.attrs?.src) {
+            attachedImages.push(decodeHtmlEntities(String(el.attrs.src)))
           }
         }
       }
 
-      return finalizeAnnouncement(session, message || '', target, attachedImages)
+      const finalText = message || getText(session)
+
+      return finalizeAnnouncement(session, finalText, target, attachedImages)
     })
 
   ctx.middleware(async (session, next) => {
@@ -376,7 +389,7 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
         pendingMap.delete(userId)
         return next()
       }
-      const text = session.content?.trim() || ''
+      const text = getText(session)
       if (text === '确认') {
         pendingMap.delete(userId)
         await safeSend(session, '开始发送公告...')
@@ -411,7 +424,7 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     const collect = collectSessions.get(userId)
     if (!collect) return next()
 
-    const text = session.content?.trim() || ''
+    const text = getText(session)
     if (text === '取消' || text === 'cancel') {
       clearTimeout(collect.timer)
       collectSessions.delete(userId)
@@ -438,7 +451,7 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     const imgs = h.select(session.elements || [], 'img')
     for (const img of imgs) {
       const src = img.attrs?.src
-      if (src) collect.imageUrls.push(String(src))
+      if (src) collect.imageUrls.push(decodeHtmlEntities(String(src)))
     }
     if (imgs.length > 0) {
       resetCollectTimer(session, collect)
