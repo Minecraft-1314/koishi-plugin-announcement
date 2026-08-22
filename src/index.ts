@@ -37,6 +37,8 @@ export const Config: Schema<AnnouncementConfig> = Schema.object({
 })
 
 export function apply(ctx: Context, config: AnnouncementConfig) {
+  if (!config.enabled) return
+
   const logger = new Logger(name)
   const debug = config.debug || false
 
@@ -105,18 +107,20 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
 
   async function setUserPreference(session: any, enabled: boolean) {
     const id = `${session.platform}:${session.userId}`
-    try {
+    const rows = await ctx.database!.get('user', { id } as any)
+    if (Array.isArray(rows) && rows.length > 0) {
       await ctx.database!.set('user', { id } as any, { announceEnabled: enabled } as any)
-    } catch {
+    } else {
       await ctx.database!.create('user', { id, announceEnabled: enabled } as any)
     }
   }
 
   async function setChannelPreference(session: any, enabled: boolean) {
-    const id = `${session.platform}:${session.channelId}`
-    try {
+    const id = `${session.platform}:${session.guildId || session.channelId}`
+    const rows = await ctx.database!.get('channel', { id } as any)
+    if (Array.isArray(rows) && rows.length > 0) {
       await ctx.database!.set('channel', { id } as any, { announceEnabled: enabled } as any)
-    } catch {
+    } else {
       await ctx.database!.create('channel', { id, announceEnabled: enabled } as any)
     }
   }
@@ -144,14 +148,15 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     do {
       try {
         const result: any = await bot.getGuildList(nextToken)
-        const data = Array.isArray(result.data) ? result.data : []
+        const data = Array.isArray(result) ? result : result?.data
+        if (!Array.isArray(data)) break
         allGroups = allGroups.concat(
           data.map((g: any) => ({
             groupId: String(g.id),
             groupName: g.name || `群组-${String(g.id).slice(-4)}`
           }))
         )
-        nextToken = result.next || null
+        nextToken = result && !Array.isArray(result) ? result.next || null : null
         attempts++
         if (attempts >= maxAttempts) {
           if (debug) logger.warn(`机器人 ${bot.selfId} 获取群列表达到最大尝试次数`)
@@ -336,7 +341,7 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     logger.info(`管理员 ${session.userId} 发起公告，目标: ${target}，内容预览: ${contentPreview}`)
     logTargetsSummary(targetUsers, targetChannels)
 
-    const confirmText = `即将发送公告：\n\n内容：\n${contentPreview}\n\n目标：\n${preview}\n\n请回复“确认”发送，回复“取消”取消，回复“修改”重新输入。`
+    const confirmText = `即将发送公告：\n\n内容：\n${contentPreview}\n\n目标：\n${preview}\n\n请回复“确认”发送，回复“取消”取消。`
     await safeSend(session, confirmText)
 
     pendingMap.set(`${session.platform}:${session.userId}`, {
@@ -410,13 +415,8 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
         await safeSend(session, '已取消发送公告')
         logger.info(`管理员 ${session.userId} 取消发送公告`)
         return
-      } else if (text === '修改') {
-        pendingMap.delete(userId)
-        await safeSend(session, '已取消，请重新使用公告命令')
-        logger.info(`管理员 ${session.userId} 选择修改公告，已取消`)
-        return
       } else {
-        await safeSend(session, '请输入“确认”发送，“取消”取消，“修改”重新输入')
+        await safeSend(session, '请输入“确认”发送，“取消”取消')
         return
       }
     }
@@ -448,23 +448,35 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
       return
     }
 
-    const imgs = h.select(session.elements || [], 'img')
+    const imgs = [
+      ...h.select(session.elements || [], 'img'),
+      ...h.select(session.elements || [], 'image')
+    ]
+    const addedImages: string[] = []
     for (const img of imgs) {
-      const src = img.attrs?.src
-      if (src) collect.imageUrls.push(decodeHtmlEntities(String(src)))
+      const src = img.attrs?.src || img.data?.src
+      if (src) addedImages.push(decodeHtmlEntities(String(src)))
     }
-    if (imgs.length > 0) {
+    if (addedImages.length > 0) {
+      collect.imageUrls.push(...addedImages)
       resetCollectTimer(session, collect)
-      await safeSend(session, `已添加 ${imgs.length} 张图片，当前共 ${collect.imageUrls.length} 张`)
     }
 
-    if (text && text !== '预览' && text !== '确认' && text !== '取消') {
-      if (collect.text) collect.text += '\n' + text
-      else collect.text = text
+    const addedText = text && text !== '预览' && text !== '确认' && text !== '取消' && text !== '开始' && text !== 'start' && text !== 'cancel' ? text : ''
+    if (addedText) {
+      if (collect.text) collect.text += '\n' + addedText
+      else collect.text = addedText
       resetCollectTimer(session, collect)
-      await safeSend(session, '文字已更新')
     }
-    return next()
+
+    if (addedImages.length > 0 && addedText) {
+      await safeSend(session, `已添加 ${addedImages.length} 张图片，当前共 ${collect.imageUrls.length} 张；文字已更新`)
+    } else if (addedImages.length > 0) {
+      await safeSend(session, `已添加 ${addedImages.length} 张图片，当前共 ${collect.imageUrls.length} 张`)
+    } else if (addedText) {
+      await safeSend(session, `当前已收集: ${collect.imageUrls.length} 张图片, 文字已更新`)
+    }
+    return
   })
 
   ctx.command(config.enableCommandName, '开启接收公告').action(async ({ session }) => {
@@ -495,7 +507,7 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     if (!session) return '会话不可用'
     if (!ctx.database) return '数据库不可用'
     if (isGroup(session)) {
-      const id = `${session.platform}:${session.channelId}`
+      const id = `${session.platform}:${session.guildId || session.channelId}`
       const rows = await ctx.database.get('channel', { id } as any)
       const enabled = rows?.[0]?.announceEnabled !== false
       return `本群公告接收：${enabled ? '开启' : '关闭'}`
