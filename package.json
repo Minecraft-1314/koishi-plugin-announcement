@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-announcement",
   "description": "Koishi 公告插件，支持向所有私聊用户和群聊发送公告，用户/群聊可自定义接收开关",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": ["lib"],
