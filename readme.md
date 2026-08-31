@@ -16,11 +16,9 @@ This is an **announcement plugin** developed for the Koishi robot framework. It 
 
 | 指令 (Command) | 说明 (Description) | 示例 (Example) |
 |----------------|--------------------|----------------|
-| `announce <内容>` | 直接发送公告（默认目标为全部） | `announce 服务器将于今晚维护` |
-| `announce -t private <内容>` | 仅发送给私聊用户 | `announce -t private 你好` |
-| `announce -t group <内容>` | 仅发送给群聊 | `announce -t group 群公告测试` |
-| `announce` | 进入收集模式（可继续发送文本/图片） | `announce` |
-| `announce -c` | 强制进入收集模式 | `announce -c` |
+| `announce` | 进入收集模式（默认目标为全部） | `announce` |
+| `announce -t private` | 进入收集模式，仅发送给私聊用户 | `announce -t private` |
+| `announce -t group` | 进入收集模式，仅发送给群聊 | `announce -t group` |
 | `announce.enable` | 开启接收公告（私聊中个人设置，群聊中管理员设置） | `announce.enable` |
 | `announce.disable` | 关闭接收公告（私聊中个人设置，群聊中管理员设置） | `announce.disable` |
 | `announce.status` | 查看当前接收状态（私聊/群聊） | `announce.status` |
@@ -53,11 +51,11 @@ This is an **announcement plugin** developed for the Koishi robot framework. It 
 ### 管理员发送公告 (Admin Sending Announcements)
 
 **指定目标类型：**
-- `announce -t private <内容>` 仅私聊
-- `announce -t group <内容>` 仅群聊
-- `announce -t all <内容>` 全部（默认）
+- `announce -t private` 仅私聊
+- `announce -t group` 仅群聊
+- `announce -t all` 全部（默认）
 
-1. 发送 `announce` 或 `announce -c` 进入收集模式。
+1. 发送 `announce`（可搭配 `-t` 指定目标类型）进入收集模式。
 2. 机器人提示后，你可以：
    - 发送文本消息（自动追加）
    - 发送图片消息（自动累积，最多 5 张）

@@ -123,23 +123,13 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     })
   }
 
-  ctx.command('announce [message:text]', '发送公告（需要权限等级 4）', { authority: 4 })
+  ctx.command('announce', '发送公告（需要权限等级 4）', { authority: 4 })
     .option('target', '-t <target>', { type: /^(private|group|all)$/i, fallback: 'all' })
-    .option('collect', '-c', { type: 'boolean' })
-    .action(async ({ session, options }, message) => {
+    .action(async ({ session, options }) => {
       if (!session) return '会话不可用'
 
       const target = ((options?.target as string) || 'all').toLowerCase()
-      const attachedImages = extractImages(session.elements)
-      const useCollect = options?.collect || (!message && attachedImages.length === 0)
-
-      if (useCollect) {
-        startCollect(session, target)
-        return
-      }
-
-      const finalText = message || getText(session.elements, session.content)
-      return finalizeAnnouncement(session, finalText, target, attachedImages)
+      startCollect(session, target)
     })
 
   ctx.middleware(async (session, next) => {
