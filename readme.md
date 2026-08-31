@@ -12,22 +12,6 @@ This is an **announcement plugin** developed for the Koishi robot framework. It 
 - GitHub: `https://github.com/Minecraft-1314/koishi-plugin-announcement`
 - Issues: `https://github.com/Minecraft-1314/koishi-plugin-announcement/issues`
 
-## 功能特性 (Features)
-
-- ✅ 支持向所有私聊用户发送公告
-- ✅ 支持向所有群聊发送公告
-- ✅ 支持指定目标类型（私聊 / 群聊 / 全部）
-- ✅ 管理员 ID 白名单控制发送权限
-- ✅ 用户可在私聊中自行开启/关闭公告接收
-- ✅ 群聊接收状态可由管理员在群内设置
-- ✅ 支持文字与图片公告
-- ✅ 支持收集模式：连续发送文本和图片，最后确认发送
-- ✅ 发送前显示目标预览和内容预览，可确认/取消/修改
-- ✅ 调试模式输出详细日志
-- ✅ 实时获取好友和群列表（支持分页）
-- ✅ 多平台、多机器人自动去重发送
-- ✅ 数据库存储接收偏好，默认全部开启
-
 ## 核心指令 (Core Commands)
 
 | 指令 (Command) | 说明 (Description) | 示例 (Example) |
@@ -61,33 +45,17 @@ This is an **announcement plugin** developed for the Koishi robot framework. It 
 |----------------|-------------|-------------------|---------------------|
 | `enabled` | boolean | true | 是否启用公告插件 (Enable plugin) |
 | `debug` | boolean | false | 调试模式（详细日志输出）(Debug mode with detailed logs) |
-| `adminIds` | string | 空 | 管理员用户ID（逗号分隔，仅这些用户可发送公告）(Admin user IDs, comma separated, only these users can send announcements) |
 | `sendInterval` | number | 200 | 每条消息发送间隔 (ms) (Interval between each message) |
 | `collectTimeout` | number | 120 | 收集模式超时时间（秒）(Collection mode timeout in seconds) |
-| `announceCommandName` | string | `announce` | 发送公告命令名 (Command name for sending announcements) |
-| `enableCommandName` | string | `announce.enable` | 开启接收公告命令名 (Command name for enabling reception) |
-| `disableCommandName` | string | `announce.disable` | 关闭接收公告命令名 (Command name for disabling reception) |
-| `statusCommandName` | string | `announce.status` | 查看接收状态命令名 (Command name for checking status) |
 
 ## 使用方法 (Usage)
 
 ### 管理员发送公告 (Admin Sending Announcements)
 
-#### 方式一：直接发送
-
-1. 在插件配置中填写 `adminIds`，例如 `123456,789012`。
-2. 使用命令 `announce <公告内容>` 发起公告。
-   - 可在命令后直接附带图片（如果平台支持）。
-3. 机器人会返回目标预览（私聊用户和群聊列表）和内容预览。
-4. 回复 `确认` 发送，回复 `取消` 取消，回复 `修改` 重新输入。
-5. 发送完成后会返回成功/失败统计。
-
 **指定目标类型：**
 - `announce -t private <内容>` 仅私聊
 - `announce -t group <内容>` 仅群聊
 - `announce -t all <内容>` 全部（默认）
-
-#### 方式二：收集模式（支持多轮输入）
 
 1. 发送 `announce` 或 `announce -c` 进入收集模式。
 2. 机器人提示后，你可以：
@@ -101,16 +69,7 @@ This is an **announcement plugin** developed for the Koishi robot framework. It 
 ### 用户设置接收 (User Settings)
 
 - **私聊中**：发送 `announce.disable` 关闭私聊公告接收，发送 `announce.enable` 重新开启，发送 `announce.status` 查看当前状态。
-- **群聊中**：只有管理员（`adminIds` 中的用户）可以使用 `announce.disable` / `announce.enable` 控制当前群聊是否接收公告。
-
-## 发送流程 (Sending Flow)
-
-1. 管理员执行 `announce` 命令或进入收集模式。
-2. 插件实时获取所有已开启接收的好友和群列表。
-3. 显示目标预览（前10个，超过部分折叠）和内容预览（含图片数量）。
-4. 管理员回复 `确认` / `取消` / `修改`。
-5. 确认后开始逐条发送，支持多平台、多机器人自动去重。
-6. 发送完成后报告成功和失败数量。
+- **群聊中**：只有权限等级达到 4 的管理员可以使用 `announce.disable` / `announce.enable` 控制当前群聊是否接收公告。
 
 ## 注意事项 (Notes)
 
@@ -118,7 +77,7 @@ This is an **announcement plugin** developed for the Koishi robot framework. It 
 - 默认所有用户和群聊都接收公告，用户可自行关闭私聊接收，群聊由管理员控制。
 - 发送大量用户时可能耗时较长，请合理设置 `sendInterval`。
 - 调试模式会输出详细日志，建议仅在排查问题时开启。
-- 未配置任何 `adminIds` 时，无人可以发送公告。
+- 只有权限等级达到 4 的用户可以发送公告。
 
 ## 项目贡献者 (Contributors)
 

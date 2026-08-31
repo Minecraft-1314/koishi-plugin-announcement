@@ -11,13 +11,8 @@ export const inject = ['database']
 export const Config: Schema<AnnouncementConfig> = Schema.object({
   enabled: Schema.boolean().default(true).description('是否启用公告插件'),
   debug: Schema.boolean().default(false).description('调试模式（详细日志输出）'),
-  adminIds: Schema.string().default('').description('管理员用户ID（逗号分隔，仅这些用户可发送公告）'),
   sendInterval: Schema.number().min(0).step(1).default(200).description('每条消息发送间隔 (ms)'),
   collectTimeout: Schema.number().min(10).step(1).default(120).description('收集模式超时时间（秒）'),
-  announceCommandName: Schema.string().default('announce').description('发送公告命令名'),
-  enableCommandName: Schema.string().default('announce.enable').description('开启接收公告命令名'),
-  disableCommandName: Schema.string().default('announce.disable').description('关闭接收公告命令名'),
-  statusCommandName: Schema.string().default('announce.status').description('查看接收状态命令名'),
 })
 
 const MAX_IMAGES = 5
@@ -52,11 +47,6 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
   const logger = new Logger(name)
   const debug = config.debug || false
 
-  const adminIdSet = new Set<string>(
-    (config.adminIds || '').split(',').map(s => s.trim()).filter(Boolean)
-  )
-  if (adminIdSet.size === 0) logger.warn('未配置任何管理员ID，无人可以发送公告')
-
   try {
     ctx.model.extend('user', { announceEnabled: 'boolean' })
     ctx.model.extend('channel', { announceEnabled: 'boolean' })
@@ -68,7 +58,6 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
   const collectSessions = new Map<string, CollectState>()
 
   const sessionKey = (session: any) => `${session.platform}:${session.userId}`
-  const hasAdmin = (session: any) => adminIdSet.has(String(session.userId))
   const isGroup = (session: any) => Boolean(session.guildId)
 
   function startCollect(session: any, target: string) {
@@ -134,12 +123,11 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     })
   }
 
-  ctx.command(`${config.announceCommandName} [message:text]`, '发送公告（仅限配置的管理员ID）')
+  ctx.command('announce [message:text]', '发送公告（需要权限等级 4）', { authority: 4 })
     .option('target', '-t <target>', { type: /^(private|group|all)$/i, fallback: 'all' })
     .option('collect', '-c', { type: 'boolean' })
     .action(async ({ session, options }, message) => {
       if (!session) return '会话不可用'
-      if (!hasAdmin(session)) return '你没有权限发送公告'
 
       const target = ((options?.target as string) || 'all').toLowerCase()
       const attachedImages = extractImages(session.elements)
@@ -245,10 +233,11 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     return
   })
 
-  ctx.command(config.enableCommandName, '开启接收公告').action(async ({ session }) => {
+  ctx.command('announce.enable', '开启接收公告').action(async ({ session }) => {
     if (!session) return '会话不可用'
     if (isGroup(session)) {
-      if (!hasAdmin(session)) return '只有管理员可以修改本群公告接收'
+      const userData = await ctx.database.getUser(session.platform, session.userId!, ['authority']) as any
+      if (!userData || (userData.authority ?? 0) < 4) return '只有管理员可以修改本群公告接收'
       await setChannelPreference(ctx, session.platform, (session.guildId || session.channelId)!, true)
       return '已开启本群公告接收'
     } else {
@@ -257,10 +246,11 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     }
   })
 
-  ctx.command(config.disableCommandName, '关闭接收公告').action(async ({ session }) => {
+  ctx.command('announce.disable', '关闭接收公告').action(async ({ session }) => {
     if (!session) return '会话不可用'
     if (isGroup(session)) {
-      if (!hasAdmin(session)) return '只有管理员可以修改本群公告接收'
+      const userData = await ctx.database.getUser(session.platform, session.userId!, ['authority']) as any
+      if (!userData || (userData.authority ?? 0) < 4) return '只有管理员可以修改本群公告接收'
       await setChannelPreference(ctx, session.platform, (session.guildId || session.channelId)!, false)
       return '已关闭本群公告接收'
     } else {
@@ -269,7 +259,7 @@ export function apply(ctx: Context, config: AnnouncementConfig) {
     }
   })
 
-  ctx.command(config.statusCommandName, '查看公告接收状态').action(async ({ session }) => {
+  ctx.command('announce.status', '查看公告接收状态').action(async ({ session }) => {
     if (!session) return '会话不可用'
     if (isGroup(session)) {
       const enabled = await isChannelEnabled(ctx, session.platform, (session.guildId || session.channelId)!)

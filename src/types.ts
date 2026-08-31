@@ -12,13 +12,8 @@ declare module 'koishi' {
 export interface AnnouncementConfig {
   enabled: boolean
   debug: boolean
-  adminIds: string
   sendInterval: number
   collectTimeout: number
-  announceCommandName: string
-  enableCommandName: string
-  disableCommandName: string
-  statusCommandName: string
 }
 
 export interface TargetUser {
